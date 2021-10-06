@@ -16,7 +16,6 @@ def download_images_from_gs(image_prefix, image_extension, image_folder):
     return True
 
 def rename_images(image_folder, image_extension):
-    print('renameing...')
     rename_command = "cd {}; for f in *{}; do   mv $f ".format(image_folder, image_extension) + "${f//frame_/0}; done"
     subprocess.run(rename_command, shell=True, stderr=subprocess.STDOUT, executable='/bin/bash')
 
@@ -24,7 +23,6 @@ def rename_images(image_folder, image_extension):
 
 
 def convert_images(image_folder, image_extension):
-    print('converting...')
     conver_command = f"cd {image_folder}; mogrify -format jpg *{image_extension} && rm *{image_extension}"
     subprocess.run(conver_command, shell=True, stderr=subprocess.STDOUT, executable='/bin/bash')
 
@@ -64,7 +62,7 @@ def parse_gt_json(directory_name, output_base_dir='dataset/ap/images/train',
         for bq_row in bq_rows:
             if bq_row.get('xml_path') in image_uri_dict:
                 continue
-            image_uri_dict[bq_row.get('xml_path')] = pivot
+            image_uri_dict[bq_row.get('xml_path')] = bq_row.get('image_path')
             for det in bq_row.get('objects'):
                 if det['class'] == 'item':
                     frame_id = pivot # should start with 1
@@ -90,7 +88,7 @@ def parse_gt_json(directory_name, output_base_dir='dataset/ap/images/train',
 
     if len(image_uri_dict) > 0:
         print("Downloading images..")
-        image_name = next(iter(image_uri_dict))
+        image_name = image_uri_dict[next(iter(image_uri_dict))]
         image_prefix = image_name.replace(image_name.split('/')[-1], '')
         print(image_prefix, image_folder_full)
         download_images_from_gs(image_prefix.replace('/annotations', '/images'), img_extension, image_folder_full)

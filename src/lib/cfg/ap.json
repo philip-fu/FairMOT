@@ -1,0 +1,15 @@
+{
+    "root":"/home/jupyter/dataset",
+    "train":
+    {
+        "ap":"./data/ap.train"
+    },
+    "test_emb":
+    {
+        "ap":"./data/ap.train"
+    },
+    "test":
+    {
+        "ap":"./data/ap.train"
+    }
+}
