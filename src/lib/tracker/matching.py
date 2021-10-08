@@ -122,7 +122,7 @@ def gate_cost_matrix(kf, cost_matrix, tracks, detections, only_position=False):
     return cost_matrix
 
 
-def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda_=0.98):
+def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda_=0.98, motion_gate=True, motion_normalizer=1.):
     if cost_matrix.size == 0:
         return cost_matrix
     gating_dim = 2 if only_position else 4
@@ -130,7 +130,8 @@ def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda
     measurements = np.asarray([det.to_xyah() for det in detections])
     for row, track in enumerate(tracks):
         gating_distance = kf.gating_distance(
-            track.mean, track.covariance, measurements, only_position, metric='maha')
-        cost_matrix[row, gating_distance > gating_threshold] = np.inf
-        cost_matrix[row] = lambda_ * cost_matrix[row] + (1 - lambda_) * gating_distance
+            track.mean, track.covariance, measurements, only_position, metric='gaussian') # was 'maha'
+        if motion_gate:
+            cost_matrix[row, gating_distance > gating_threshold] = np.inf
+        cost_matrix[row] = lambda_ * cost_matrix[row] + (1 - lambda_) * np.sqrt(gating_distance) / motion_normalizer
     return cost_matrix

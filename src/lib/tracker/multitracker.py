@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torchvision import ops
 from models import *
 from models.decode import mot_decode
 from models.model import create_model, load_model
@@ -259,6 +260,12 @@ class JDETracker(object):
         dets = dets[remain_inds]
         id_feature = id_feature[remain_inds]
 
+        #nms
+        dets = torch.from_numpy(dets).float()
+        remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
+        dets = dets[remain_inds, :].cpu().detach().numpy()
+        id_feature = id_feature[remain_inds, :]
+
         # vis
         '''
         for i in range(0, dets.shape[0]):
@@ -295,8 +302,14 @@ class JDETracker(object):
         STrack.multi_predict(strack_pool)
         dists = matching.embedding_distance(strack_pool, detections)
         #dists = matching.iou_distance(strack_pool, detections)
-        dists = matching.fuse_motion(self.kalman_filter, dists, strack_pool, detections)
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.4)
+        dists = matching.fuse_motion(self.kalman_filter, dists, strack_pool, detections, 
+                                     lambda_=self.opt.appearance_weight, motion_gate=self.opt.motion_gate,
+                                     motion_normalizer=np.linalg.norm([width, height]))
+        
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.opt.match_thres)
+
+        print("="*20 + f"frame {self.frame_id}")
+        print(dists)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
