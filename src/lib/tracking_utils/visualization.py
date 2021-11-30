@@ -43,7 +43,7 @@ def plot_tracking(image, tlwhs, obj_ids, scores=None, frame_id=0, fps=0., ids2=N
         x1, y1, w, h = tlwh
         intbox = tuple(map(int, (x1, y1, x1 + w, y1 + h)))
         obj_id = int(obj_ids[i])
-        id_text = '{}'.format(int(obj_id))
+        id_text = '{} - {}'.format(int(obj_id), round(float(scores[i]), 2)) if scores else '{}'.format(int(obj_id))
         if ids2 is not None:
             id_text = id_text + ', {}'.format(int(ids2[i]))
         _line_thickness = 1 if obj_id <= 0 else line_thickness

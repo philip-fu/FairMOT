@@ -177,7 +177,7 @@ class JDETracker(object):
         else:
             opt.device = torch.device('cpu')
         print('Creating model...')
-        self.model = create_model(opt.arch, opt.heads, opt.head_conv)
+        self.model = create_model(opt.arch, opt.heads, opt.head_conv, pretrain=opt.load_model=='')
         self.model = load_model(self.model, opt.load_model)
         self.model = self.model.to(opt.device)
         self.model.eval()
@@ -308,8 +308,8 @@ class JDETracker(object):
         
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.opt.match_thres)
 
-        print("="*20 + f"frame {self.frame_id}")
-        print(dists)
+        logger.info("="*20 + f"frame {self.frame_id-1}")
+        logger.info(dists)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
@@ -373,6 +373,8 @@ class JDETracker(object):
         self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
         self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
+        #self.removed_stracks = sub_stracks(self.removed_stracks, refind_stracks)
+        #self.removed_stracks.extend(removed_stracks)
         self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
         self.lost_stracks.extend(lost_stracks)
         self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)

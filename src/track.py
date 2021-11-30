@@ -91,7 +91,7 @@ def eval_seq(opt, dataloader, data_type, result_filename, save_dir=None, show_im
         online_targets = tracker.update(blob, img0)
         online_tlwhs = []
         online_ids = []
-        #online_scores = []
+        online_scores = []
         for t in online_targets:
             tlwh = t.tlwh
             tid = t.track_id
@@ -99,13 +99,13 @@ def eval_seq(opt, dataloader, data_type, result_filename, save_dir=None, show_im
             if tlwh[2] * tlwh[3] > opt.min_box_area and not vertical:
                 online_tlwhs.append(tlwh)
                 online_ids.append(tid)
-                #online_scores.append(t.score)
+                online_scores.append(t.score)
         timer.toc()
         # save results
         results.append((frame_id + 1, online_tlwhs, online_ids))
         #results.append((frame_id + 1, online_tlwhs, online_ids, online_scores))
         if show_image or save_dir is not None:
-            online_im = vis.plot_tracking(img0, online_tlwhs, online_ids, frame_id=frame_id,
+            online_im = vis.plot_tracking(img0, online_tlwhs, online_ids, scores=online_scores, frame_id=frame_id,
                                           fps=1. / timer.average_time)
         if show_image:
             cv2.imshow('online_im', online_im)
@@ -212,6 +212,33 @@ if __name__ == '__main__':
                       201907251118_darshan_lane46
                       201907251121_darshan_lane46
                       '''
+        """
+        seqs_str = '''fp_20210908_967_27_1631111760000-1631111850000
+                      fp_20210908_967_28_1631119740000-1631119760000
+                      fp_20210908_967_30_1631105760000-1631105820000
+                      fp_20210908_967_33_1631111940000-1631112060000
+                      fp_20210908_967_46_1631105880000-1631105940000
+                      fp_20210908_967_46_1631117820000-1631117880000
+                      fp_20210908_967_47_1631105580000-1631105660000
+                      fp_20210908_1000_44_1631072950000-1631072960000
+                      fp_20210908_2656_45_1631052655000-1631052690000
+                      fp_20210908_2656_48_1631054700000-1631054760000
+                      fp_20210908_2656_50_1631053500000-1631053540000
+                      fp_20210908_3648_33_1631118210000-1631118260000
+                      fp_20210908_3648_37_1631114670000-1631114730000
+                      fp_20210908_3648_39_1631117100000-1631117160000
+                      fp_20210908_3648_43_1631114010000-1631114060000
+                      fp_20210908_3648_46_1631123790000-1631123835000
+                      fp_20210908_3648_47_1631116350000-1631116440000
+                      fp_20210908_3648_50_1631113980000-1631114055000
+                      fp_20210908_3763_35_1631128500000-1631128560000
+                      fp_20210908_3763_37_1631118700000-1631118730000
+                      fp_20210908_3763_45_1631121420000-1631121480000
+                      fp_20210908_3763_45_1631127180000-1631127240000
+                      fp_20210908_3763_51_1631118420000-1631118450000
+                      fp_20210908_6243_1_1631125530000-1631125560000
+                   '''
+        """
         data_root = os.path.join(opt.data_dir, 'ap/images/train')
     else:
         print('Only test data for AP is available. Exiting.')
@@ -223,5 +250,5 @@ if __name__ == '__main__':
          seqs=seqs,
          exp_name='fairmot-yolov5',
          show_image=False,
-         save_images=True,
+         save_images=False,
          save_videos=True)
