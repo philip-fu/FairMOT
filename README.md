@@ -257,3 +257,8 @@ A large part of the code is borrowed from [Zhongdao/Towards-Realtime-MOT](https:
 }
 ```
 
+## To export to onnx
+
+```
+python src/dladcn_expoer_onnx.py mot
+```
