@@ -12,16 +12,16 @@ import motmetrics as mm
 import numpy as np
 import torch
 
-from tracker.multitracker import JDETracker
-from tracking_utils import visualization as vis
-from tracking_utils.log import logger
-from tracking_utils.timer import Timer
-from tracking_utils.evaluation import Evaluator
-from tracking_utils.eval import trackeval
-import datasets.dataset.jde as datasets
+from lib.tracker.multitracker import JDETracker
+from lib.tracking_utils import visualization as vis
+from lib.tracking_utils.log import logger
+from lib.tracking_utils.timer import Timer
+from lib.tracking_utils.evaluation import Evaluator
+from lib.tracking_utils.eval import trackeval
+import lib.datasets.dataset.jde as datasets
 
-from tracking_utils.utils import mkdir_if_missing
-from opts import opts
+from lib.tracking_utils.utils import mkdir_if_missing
+from lib.opts import opts
 
 
 def write_results(filename, results, data_type):
