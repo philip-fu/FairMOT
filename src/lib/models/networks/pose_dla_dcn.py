@@ -479,6 +479,8 @@ class DLASeg(nn.Module):
         z = {}
         for head in self.heads:
             z[head] = self.__getattr__(head)(y[-1])
+        if not int(os.getenv('IS_EXPORT', 0)):
+            return [z]
 
         hm = z["hm"]
         wh = z["wh"]

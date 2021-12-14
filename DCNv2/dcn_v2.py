@@ -18,7 +18,7 @@ class _DCNv2(Function):
     ###############################################  changed here ############################################################
     @staticmethod
     def symbolic(g, input, offset_mask, weight, bias, stride, padding, dilation, deformable_groups):
-        return g.op("Plugin", input, offset_mask, weight, bias, name_s="DCNv2", info_s=json.dumps({
+        return g.op("ai.onnx.contrib::_DCNv2", input, offset_mask, weight, bias, name_s="DCNv2", info_s=json.dumps({
             "dilation": dilation,
             "padding": padding,
             "stride": stride,

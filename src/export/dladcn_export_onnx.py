@@ -10,9 +10,9 @@ from collections import OrderedDict
 import cv2
 
 opt = opts().init()
-model = create_model(opt.arch, opt.heads, opt.head_conv, pretrain=False)
+model = create_model(opt.arch, opt.heads, opt.head_conv, pretrain=False, with_processing=True)
 model_state_dict = model.state_dict()
-model_filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../models/dla34_ap_all_ds_20.pth")
+model_filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../models/dla34conv_ap_all_ds_20.pth")
 print(f"Loading {model_filename}")
 checkpoint = torch.load(model_filename, map_location="cpu")
 checkpoint = checkpoint["state_dict"]
@@ -40,4 +40,7 @@ model.cuda()
 
 input = torch.zeros((1, 3, 608, 1088)).cuda()    # the size could be reset
 
-onnx.export(model, (input), model_filename.replace('pth', '.onnx'), output_names=["hm", "wh", "reg", "hm_pool"], verbose=False, operator_export_type=onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK)
+onnx.export(model, (input), model_filename.replace('.pth', '.onnx'), input_names=['input'] ,output_names=['hm', 'wh', 'id', 'reg', 'dets', 'inds'], verbose=False, 
+            operator_export_type=onnx.OperatorExportTypes.ONNX_ATEN_FALLBACK,
+            opset_version=10)
+#{'hm': 1, 'wh': 4, 'id': 128, 'reg': 2}

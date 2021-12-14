@@ -167,7 +167,7 @@ class PoseYOLOv5s(nn.Module):
         return [ret]
 
 
-def get_pose_net(num_layers, heads, head_conv):
+def get_pose_net(num_layers, heads, head_conv, pretrain=True):
     config_file = os.path.join(
         os.path.dirname(__file__),
         'networks/config/yolov5s.yaml'
@@ -175,7 +175,7 @@ def get_pose_net(num_layers, heads, head_conv):
     pretrained = os.path.join(
         os.path.dirname(__file__),
         '../../../models/yolov5s.pt'
-    )
+    ) if pretrain else ''
     model = PoseYOLOv5s(heads, config_file)
     initialize_weights(model, pretrained)
     return model

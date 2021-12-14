@@ -481,10 +481,49 @@ class DLASeg(nn.Module):
             z[head] = self.__getattr__(head)(y[-1])
         return [z]
     
+class DLASegWithPocessing(DLASeg):
+    def forward(self, x):
+        from ...models.decode import mot_decode
+        from ...models.utils import _tranpose_and_gather_feat
+        # pre processing
+        # not doing it here.
 
-def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
-  model = DLASeg('dla{}'.format(num_layers), heads,
-                 pretrained=True,
+        # regular
+        x = self.base(x)
+        x = self.dla_up(x)
+
+        y = []
+        for i in range(self.last_level - self.first_level):
+            y.append(x[i].clone())
+        self.ida_up(y, 0, len(y))
+
+        z = {}
+        for head in self.heads:
+            z[head] = self.__getattr__(head)(y[-1])
+        #return [z]
+
+        # post processing
+        with torch.no_grad():
+            z['hm'] = z['hm'].sigmoid_()
+            z['id'] = F.normalize(z['id'], dim=1)
+
+            z['dets'], z['inds'] = mot_decode(z['hm'], z['wh'], reg=z['reg'], ltrb=True, K=500)
+            #z['id'] = _tranpose_and_gather_feat(z['id'], z['inds']).squeeze(0)
+            
+        return [z]
+
+
+def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4, pretrain=True, with_processing=False):
+  if with_processing:
+      model = DLASegWithPocessing('dla{}'.format(num_layers), heads,
+                 pretrained=pretrain,
+                 down_ratio=down_ratio,
+                 final_kernel=1,
+                 last_level=5,
+                 head_conv=head_conv)
+  else:
+      model = DLASeg('dla{}'.format(num_layers), heads,
+                 pretrained=pretrain,
                  down_ratio=down_ratio,
                  final_kernel=1,
                  last_level=5,
