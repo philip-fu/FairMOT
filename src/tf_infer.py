@@ -75,6 +75,7 @@ class JdeDla34ConvTF(object):
         self.max_per_image = 500
         self.num_classes = 1
         self.down_ratio = 4
+        self.conf_thres = 0.4
 
     def load_saved_model(self, model_filepath):
         '''
@@ -116,13 +117,21 @@ class JdeDla34ConvTF(object):
     def _postprocessing(self, output, img_ori):
         img_height, img_width = img_ori.shape[0:2]
         hm, reg, id_feature, wh, dets, inds = output
-        id_feature = _tranpose_and_gather_feat(id_feature, inds)
+        id_feature = np.expand_dims(id_feature, 0)
+        dets = np.expand_dims(dets, 0)
+        inds = np.expand_dims(inds, 0)
+
+        id_feature = _tranpose_and_gather_feat(id_feature, inds)[0]
         dets = _postprocess_dets(dets, 
                                  inp_size=(self.height, self.width), 
                                  img_size=(img_height, img_width), 
                                  num_classes=self.num_classes, 
                                  down_ratio=self.down_ratio)
         dets = _merge_dets([dets])[1]
+
+        remain_inds = dets[:, 4] > self.conf_thres
+        dets = dets[remain_inds]
+        id_feature = id_feature[remain_inds]
 
         """
         remain_inds = dets[:, 4] > self.opt.conf_thres
@@ -135,23 +144,29 @@ class JdeDla34ConvTF(object):
         dets = dets[remain_inds, :].cpu().detach().numpy()
         id_feature = id_feature[remain_inds, :]
         """
+
+        return {'dets': dets, 'id_feature': id_feature}
         
 
 
-    def infer(self, img):
+    def infer(self, imgs):
         # Know your output node name
-        img_ori = img.copy()
-        img = self._preprocessing(img)
-        output = self.sess.run(self.output_tensors, feed_dict = {self.input_tensor: [img]})
+        img_ori = imgs[0].copy()
+        imgs = [self._preprocessing(img) for img in imgs]
+        preds = self.sess.run(self.output_tensors, feed_dict = {self.input_tensor: imgs})
 
-        self._postprocessing(output, img_ori)
+        outputs = []
+        for output in zip(*preds):
+            print([output[0].shape, output[1].shape, output[2].shape, output[3].shape, output[4].shape, output[5].shape])
+            outputs.append(self._postprocessing(output, img_ori))
 
-        return output
+        return outputs
 
 
 if __name__ == "__main__":
-    model_filepath = 'models/dla34conv_ap_all_ds_20'
+    model_filepath = 'models/dla34conv_ap_all_ds_25_bz6'
     model = JdeDla34ConvTF(model_filepath)
 
     img = cv2.imread('images/test_ap/000040.jpg')
-    pred = model.infer(img)
+    preds = model.infer([img for i in range(6)])
+    print(preds)
