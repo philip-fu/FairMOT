@@ -81,22 +81,22 @@ class JdeDla34ConvTF(object):
         Lode trained model.
         '''
         print('Loading model...')
-        self.graph = tf.Graph()
-        self.sess = tf.compat.v1.Session(graph=self.graph, config=tf.compat.v1.ConfigProto(allow_soft_placement=True))
+        graph = tf.Graph()
+        self.sess = tf.compat.v1.Session(graph=graph, config=tf.compat.v1.ConfigProto(allow_soft_placement=True))
 
         tf.compat.v1.saved_model.load(self.sess, [tf.saved_model.SERVING], model_filepath, import_scope='')
 
-        #all_tensors = [tensor for op in self.graph.get_operations() for tensor in op.values()]
+        #all_tensors = [tensor for op in graph.get_operations() for tensor in op.values()]
         #for t in all_tensors:
         #    print(t)
         
-        self.input_tensor = self.graph.get_tensor_by_name("serving_default_input:0") #Tensor("serving_default_input:0", shape=(1, 3, 608, 1088), dtype=float32)
-        output_hm_tensor = self.graph.get_tensor_by_name("PartitionedCall:1") #Tensor("PartitionedCall:1", shape=(1, 1, 152, 272), dtype=float32)
-        output_reg_tensor = self.graph.get_tensor_by_name("PartitionedCall:4") #Tensor("PartitionedCall:4", shape=(1, 2, 152, 272), dtype=float32)
-        output_id_tensor = self.graph.get_tensor_by_name("PartitionedCall:2") #Tensor("PartitionedCall:2", shape=(1, 128, 152, 272), dtype=float32)
-        output_wh_tensor = self.graph.get_tensor_by_name("PartitionedCall:5") #Tensor("PartitionedCall:5", shape=(1, 4, 152, 272), dtype=float32)
-        output_dets = self.graph.get_tensor_by_name("PartitionedCall:0") #Tensor("PartitionedCall:0", shape=(1, 500, 6), dtype=float32)
-        output_inds = self.graph.get_tensor_by_name("PartitionedCall:3") #Tensor("PartitionedCall:3", shape=(1, 500), dtype=int64)
+        self.input_tensor = graph.get_tensor_by_name("serving_default_input:0") #Tensor("serving_default_input:0", shape=(1, 3, 608, 1088), dtype=float32)
+        output_hm_tensor = graph.get_tensor_by_name("PartitionedCall:1") #Tensor("PartitionedCall:1", shape=(1, 1, 152, 272), dtype=float32)
+        output_reg_tensor = graph.get_tensor_by_name("PartitionedCall:4") #Tensor("PartitionedCall:4", shape=(1, 2, 152, 272), dtype=float32)
+        output_id_tensor = graph.get_tensor_by_name("PartitionedCall:2") #Tensor("PartitionedCall:2", shape=(1, 128, 152, 272), dtype=float32)
+        output_wh_tensor = graph.get_tensor_by_name("PartitionedCall:5") #Tensor("PartitionedCall:5", shape=(1, 4, 152, 272), dtype=float32)
+        output_dets = graph.get_tensor_by_name("PartitionedCall:0") #Tensor("PartitionedCall:0", shape=(1, 500, 6), dtype=float32)
+        output_inds = graph.get_tensor_by_name("PartitionedCall:3") #Tensor("PartitionedCall:3", shape=(1, 500), dtype=int64)
         
         self.output_tensors = [output_hm_tensor, output_reg_tensor, output_id_tensor, output_wh_tensor, output_dets, output_inds]
 

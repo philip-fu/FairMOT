@@ -7,7 +7,7 @@ from onnx_tf.backend import prepare
 #import onnxruntime as ort
 #from onnxruntime_extensions import (onnx_op, PyCustomOpDef, get_library_path as _get_library_path)
 
-onnx_model_filename = "models/dla34conv_ap_all_ds_20.onnx"
+onnx_model_filename = "models/dla34conv_ap_all_ds_25.onnx"
 model = onnx.load(onnx_model_filename)
 onnx.checker.check_model(model)
 print(onnx.helper.printable_graph(model.graph))
