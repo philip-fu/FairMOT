@@ -11,6 +11,7 @@ import json
 import numpy as np
 import torch
 import copy
+import tqdm
 
 from torch.utils.data import Dataset
 from torchvision.transforms import transforms as T
@@ -354,7 +355,7 @@ class JointDataset(LoadImagesAndLabels):  # for training
     default_resolution = [1088, 608]
     mean = None
     std = None
-    num_classes = 1
+    num_classes = 2
 
     def __init__(self, opt, root, paths, img_size=(1088, 608), augment=False, transforms=None):
         self.opt = opt
@@ -363,7 +364,7 @@ class JointDataset(LoadImagesAndLabels):  # for training
         self.label_files = OrderedDict()
         self.tid_num = OrderedDict()
         self.tid_start_index = OrderedDict()
-        self.num_classes = 1
+        self.num_classes = 2
 
         for ds, path in paths.items():
             with open(path, 'r') as file:
@@ -377,7 +378,7 @@ class JointDataset(LoadImagesAndLabels):  # for training
 
         for ds, label_paths in self.label_files.items():
             max_index = -1
-            for lp in label_paths:
+            for lp in tqdm.tqdm(label_paths):
                 lb = np.loadtxt(lp)
                 if len(lb) < 1:
                     continue

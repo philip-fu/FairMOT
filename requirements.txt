@@ -1,5 +1,5 @@
 yacs
-opencv-python
+opencv-python-headless
 PyYAML
 cython-bbox
 scipy

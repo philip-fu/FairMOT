@@ -1,0 +1,17 @@
+{
+    "root":"",
+    "train":
+    {
+        "ap":"./data/ap.train",
+        "ap_od":"./data/ap_od_all.train",
+        "ap_od_dynamic": "./data/ap_od_dynamic_all.train"
+    },
+    "test_emb":
+    {
+        "ap":"./data/ap.train"
+    },
+    "test":
+    {
+        "ap":"./data/ap.train"
+    }
+}
