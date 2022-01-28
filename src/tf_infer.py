@@ -70,8 +70,9 @@ class JdeDla34ConvTF(object):
         self.load_saved_model(model_filepath = self.model_filepath)
         #self.load_graph(model_filepath = self.model_filepath)
 
-        self.height = 608
-        self.width = 1088
+        img_size = (480, 864) #(608, 1088)
+        self.height = img_size[0]
+        self.width = img_size[1]
         self.max_per_image = 500
         self.num_classes = 1
         self.down_ratio = 4
@@ -83,13 +84,15 @@ class JdeDla34ConvTF(object):
         '''
         print('Loading model...')
         graph = tf.Graph()
-        self.sess = tf.compat.v1.Session(graph=graph, config=tf.compat.v1.ConfigProto(allow_soft_placement=True))
+        self.sess = tf.compat.v1.Session(graph=graph, config=tf.compat.v1.ConfigProto(allow_soft_placement=False, log_device_placement=False,
+                                                                                      gpu_options=tf.compat.v1.GPUOptions(allow_growth=True)))
 
         tf.compat.v1.saved_model.load(self.sess, [tf.saved_model.SERVING], model_filepath, import_scope='')
 
         #all_tensors = [tensor for op in graph.get_operations() for tensor in op.values()]
         #for t in all_tensors:
         #    print(t)
+        #exit()
         
         self.input_tensor = graph.get_tensor_by_name("serving_default_input:0") #Tensor("serving_default_input:0", shape=(1, 3, 608, 1088), dtype=float32)
         output_hm_tensor = graph.get_tensor_by_name("PartitionedCall:1") #Tensor("PartitionedCall:1", shape=(1, 1, 152, 272), dtype=float32)
@@ -157,16 +160,27 @@ class JdeDla34ConvTF(object):
 
         outputs = []
         for output in zip(*preds):
-            print([output[0].shape, output[1].shape, output[2].shape, output[3].shape, output[4].shape, output[5].shape])
+            #print([output[0].shape, output[1].shape, output[2].shape, output[3].shape, output[4].shape, output[5].shape])
             outputs.append(self._postprocessing(output, img_ori))
 
         return outputs
 
 
 if __name__ == "__main__":
-    model_filepath = 'models/dla34conv_ap_all_ds_25_bz6'
+    import time
+
+    bz = 3
+
+    model_filepath = f'models/dla34conv_864x480_ap_all_ds_25_bz{bz}'
     model = JdeDla34ConvTF(model_filepath)
 
     img = cv2.imread('images/test_ap/000040.jpg')
-    preds = model.infer([img for i in range(6)])
-    print(preds)
+    _ = model.infer([img for i in range(bz)])
+    
+    
+    time_start = time.time()
+    n = 100
+    for _ in range(n):
+        preds = model.infer([img for i in range(bz)])
+    #print(preds)
+    print(f"Running {n*bz/(time.time()-time_start)} fps")

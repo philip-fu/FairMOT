@@ -7,10 +7,11 @@ from onnx_tf.backend import prepare
 #import onnxruntime as ort
 #from onnxruntime_extensions import (onnx_op, PyCustomOpDef, get_library_path as _get_library_path)
 
-onnx_model_filename = "models/dla34conv_ap_all_ds_25.onnx"
+bz = 3
+onnx_model_filename = f"models/dla34conv_864x480_ap_all_ds_25_bz{bz}.onnx"
 model = onnx.load(onnx_model_filename)
 onnx.checker.check_model(model)
-print(onnx.helper.printable_graph(model.graph))
+#print(onnx.helper.printable_graph(model.graph))
 
 
 from onnx_tf.handlers.backend_handler import BackendHandler
@@ -18,6 +19,13 @@ from onnx_tf.handlers.handler import onnx_op
 from onnx_tf.handlers.handler import tf_func
 
 
+
+
+
+tf_rep = prepare(model, strict=True, auto_cast=True)  # prepare tf representation
+tf_rep.export_graph(onnx_model_filename.replace('.onnx', ''))  # export the model
+
+""" trying to run inference as onnx
 @onnx_op("_DCNv2")
 # @tf.func
 class _DCNv2(BackendHandler):
@@ -36,13 +44,6 @@ class _DCNv2(BackendHandler):
         return [cls.make_tensor_from_onnx_node(node, **kwargs)]
 
 
-tf_rep = prepare(model, strict=True, auto_cast=True)  # prepare tf representation
-tf_rep.export_graph(onnx_model_filename.replace('.onnx', '.pb'))  # export the model
-
-
-
-
-""" trying to run inference as onnx
 @onnx_op(op_type='_DCNv2', domain='ai.onnx.contrib',
          inputs=[PyCustomOpDef.dt_float, PyCustomOpDef.dt_float, PyCustomOpDef.dt_float, PyCustomOpDef.dt_float], outputs=[PyCustomOpDef.dt_float])
 def _DCNv2(x, y, z, p):
