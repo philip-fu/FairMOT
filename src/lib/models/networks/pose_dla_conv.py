@@ -507,7 +507,7 @@ class DLASegWithPocessing(DLASeg):
             z['hm'] = z['hm'].sigmoid_()
             z['id'] = F.normalize(z['id'], dim=1)
 
-            z['dets'], z['inds'] = mot_decode(z['hm'], z['wh'], reg=z['reg'], ltrb=True, K=500)
+            z['dets'], z['inds'] = mot_decode(z['hm'], z['wh'], reg=z['reg'], ltrb=True, K=30)
             #z['id'] = _tranpose_and_gather_feat(z['id'], z['inds']).squeeze(0)
             
         return [z]
