@@ -88,7 +88,7 @@ class opts(object):
                                   'test on test set')
 
     # test
-    self.parser.add_argument('--K', type=int, default=500,
+    self.parser.add_argument('--K', type=int, default=30,
                              help='max number of output objects.') 
     self.parser.add_argument('--not_prefetch_test', action='store_true',
                              help='not use parallal data pre-processing.')
@@ -111,11 +111,13 @@ class opts(object):
     self.parser.add_argument('--val_hie', default=False, help='val hie')
     self.parser.add_argument('--test_hie', default=False, help='test hie')
     self.parser.add_argument('--conf_thres', type=float, default=0.4, help='confidence thresh for tracking')
+    self.parser.add_argument('--high_conf_thres', type=float, default=0.6, help='high confidence thresh for BYTETrack')
     self.parser.add_argument('--match_thres', type=float, default=0.4, help='confidence thresh in tracking, reject match if greater than thres.')
     self.parser.add_argument('--appearance_weight', type=float, default=0.4, help='appearance_weight * appearance_dist + (1-appearance_weight) * motion_dist')
     self.parser.add_argument('--motion_gate', default=False, help='whether to reject faraway match.')
-    self.parser.add_argument('--det_thres', type=float, default=0.3, help='confidence thresh for detection')
+    self.parser.add_argument('--det_thres', type=float, default=0.3, help='confidence thresh for detection. New tracks will only be initiated if conf is higher.')
     self.parser.add_argument('--nms_thres', type=float, default=0.5, help='iou thresh for nms')
+    self.parser.add_argument('--byte_track', default=False, help='to use BYTETrack')
     self.parser.add_argument('--track_buffer', type=int, default=30, help='tracking buffer')
     self.parser.add_argument('--min-box-area', type=float, default=100, help='filter out tiny boxes')
     self.parser.add_argument('--input-video', type=str,
@@ -230,8 +232,8 @@ class opts(object):
       if opt.reg_offset:
         opt.heads.update({'reg': 2})
       opt.nID = dataset.nID
-      opt.img_size = (1088, 608)
-      #opt.img_size = (864, 480)
+      #opt.img_size = (1088, 608)
+      opt.img_size = (864, 480)
       #opt.img_size = (576, 320)
     else:
       assert 0, 'task not defined!'
@@ -240,7 +242,7 @@ class opts(object):
 
   def init(self, args=''):
     default_dataset_info = {
-      'mot': {'default_resolution': [608, 1088], 'num_classes': 1,
+      'mot': {'default_resolution': [480, 864], 'num_classes': 2,
                 'mean': [0.408, 0.447, 0.470], 'std': [0.289, 0.274, 0.278],
                 'dataset': 'jde', 'nID': 14455},
     }

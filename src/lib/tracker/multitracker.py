@@ -202,22 +202,22 @@ class JDETracker(object):
         dets = ctdet_post_process(
             dets.copy(), [meta['c']], [meta['s']],
             meta['out_height'], meta['out_width'], self.opt.num_classes)
-        for j in range(1, self.opt.num_classes + 1):
+        for j in range(self.opt.num_classes):
             dets[0][j] = np.array(dets[0][j], dtype=np.float32).reshape(-1, 5)
         return dets[0]
 
     def merge_outputs(self, detections):
         results = {}
-        for j in range(1, self.opt.num_classes + 1):
+        for j in range(self.opt.num_classes):
             results[j] = np.concatenate(
                 [detection[j] for detection in detections], axis=0).astype(np.float32)
 
         scores = np.hstack(
-            [results[j][:, 4] for j in range(1, self.opt.num_classes + 1)])
+            [results[j][:, 4] for j in range(self.opt.num_classes)])
         if len(scores) > self.max_per_image:
             kth = len(scores) - self.max_per_image
             thresh = np.partition(scores, kth)[kth]
-            for j in range(1, self.opt.num_classes + 1):
+            for j in range(self.opt.num_classes):
                 keep_inds = (results[j][:, 4] >= thresh)
                 results[j] = results[j][keep_inds]
         return results
@@ -248,23 +248,38 @@ class JDETracker(object):
             id_feature = F.normalize(id_feature, dim=1)
 
             reg = output['reg'] if self.opt.reg_offset else None
-            dets, inds = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K)
+            dets, inds, cls_inds_masks = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K, num_classes=self.opt.num_classes)
             id_feature = _tranpose_and_gather_feat(id_feature, inds)
             id_feature = id_feature.squeeze(0)
             id_feature = id_feature.cpu().numpy()
 
         dets = self.post_process(dets, meta)
-        dets = self.merge_outputs([dets])[1]
+        dets = self.merge_outputs([dets])[1] # only track class #1
+        id_feature = id_feature[cls_inds_masks.cpu().numpy()[1], :]
 
         remain_inds = dets[:, 4] > self.opt.conf_thres
         dets = dets[remain_inds]
         id_feature = id_feature[remain_inds]
 
-        #nms
-        dets = torch.from_numpy(dets).float()
-        remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
-        dets = dets[remain_inds, :].cpu().detach().numpy()
-        id_feature = id_feature[remain_inds, :]
+        if self.opt.byte_track:
+            remain_inds = dets[:, 4] >= self.opt.high_conf_thres
+            inds_low = dets[:, 4] > self.opt.conf_thres
+            inds_high = dets[:, 4] < self.opt.high_conf_thres
+
+            inds_second = np.logical_and(inds_low, inds_high)
+            dets_second = dets[inds_second]
+            id_feature_second = id_feature[inds_second]
+            
+            id_feature = id_feature[remain_inds]
+            dets = dets[remain_inds]
+            
+        elif self.opt.nms_thres > 0:
+            #nms
+            dets = torch.from_numpy(dets).float()
+            remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
+            dets = dets[remain_inds, :].cpu().detach().numpy()
+            id_feature = id_feature[remain_inds, :]
+
 
         # vis
         '''
@@ -294,7 +309,7 @@ class JDETracker(object):
             else:
                 tracked_stracks.append(track)
 
-        ''' Step 2: First association, with embedding'''
+        ''' Step 2: First association, with embedding on high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
         # Predict the current location with KF
         #for strack in strack_pool:
@@ -321,30 +336,45 @@ class JDETracker(object):
                 track.re_activate(det, self.frame_id, new_id=False)
                 refind_stracks.append(track)
 
-        ''' Step 3: Second association, with IOU'''
-        detections = [detections[i] for i in u_detection]
-        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
-        dists = matching.iou_distance(r_tracked_stracks, detections)
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=0.5)
-
-        for itracked, idet in matches:
-            track = r_tracked_stracks[itracked]
-            det = detections[idet]
-            if track.state == TrackState.Tracked:
-                track.update(det, self.frame_id)
-                activated_starcks.append(track)
+        ''' Step 3: Second association, with IOU on low score detection boxes'''
+        if self.opt.byte_track:
+            if len(dets_second) > 0:
+                '''Detections'''
+                detections_second = [STrack(STrack.tlbr_to_tlwh(tlbrs[:4]), tlbrs[4], f, 30) for
+                                    (tlbrs, f) in zip(dets_second[:, :5], id_feature_second)]
             else:
-                track.re_activate(det, self.frame_id, new_id=False)
-                refind_stracks.append(track)
+                detections_second = []
+            #detections = [detections[i] for i in u_detection]
+            r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+            dists = matching.iou_distance(r_tracked_stracks, detections_second)
+            matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
 
-        for it in u_track:
-            track = r_tracked_stracks[it]
-            if not track.state == TrackState.Lost:
-                track.mark_lost()
-                lost_stracks.append(track)
+            for itracked, idet in matches:
+                track = r_tracked_stracks[itracked]
+                det = detections_second[idet]
+                if track.state == TrackState.Tracked:
+                    track.update(det, self.frame_id)
+                    activated_starcks.append(track)
+                else:
+                    track.re_activate(det, self.frame_id, new_id=False)
+                    refind_stracks.append(track)
+
+            for it in u_track:
+                track = r_tracked_stracks[it]
+                if not track.state == TrackState.Lost:
+                    track.mark_lost()
+                    lost_stracks.append(track)
+
+        else:
+            u_detection_second = []
+            for it in u_track:
+                track = strack_pool[it]
+                if not track.state == TrackState.Lost:
+                    track.mark_lost()
+                    lost_stracks.append(track)
 
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
-        detections = [detections[i] for i in u_detection]
+        detections = [detections[i] for i in u_detection] + [detections_second[j] for j in u_detection_second]
         dists = matching.iou_distance(unconfirmed, detections)
         matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
         for itracked, idet in matches:

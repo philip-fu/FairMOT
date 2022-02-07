@@ -354,7 +354,7 @@ class JointDataset(LoadImagesAndLabels):  # for training
     default_resolution = [1088, 608]
     mean = None
     std = None
-    num_classes = 1
+    num_classes = 2
 
     def __init__(self, opt, root, paths, img_size=(1088, 608), augment=False, transforms=None):
         self.opt = opt
@@ -363,7 +363,7 @@ class JointDataset(LoadImagesAndLabels):  # for training
         self.label_files = OrderedDict()
         self.tid_num = OrderedDict()
         self.tid_start_index = OrderedDict()
-        self.num_classes = 1
+        self.num_classes = 2
 
         for ds, path in paths.items():
             with open(path, 'r') as file:
