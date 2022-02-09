@@ -122,7 +122,7 @@ def gate_cost_matrix(kf, cost_matrix, tracks, detections, only_position=False):
     return cost_matrix
 
 
-def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda_=0.98, motion_gate=True, motion_normalizer=1.):
+def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda_=0.98, motion_gate=-1, motion_normalizer=1.):
     if cost_matrix.size == 0:
         return cost_matrix
     gating_dim = 2 if only_position else 4
@@ -131,7 +131,45 @@ def fuse_motion(kf, cost_matrix, tracks, detections, only_position=False, lambda
     for row, track in enumerate(tracks):
         gating_distance = kf.gating_distance(
             track.mean, track.covariance, measurements, only_position, metric='gaussian') # was 'maha'
-        if motion_gate:
-            cost_matrix[row, gating_distance > gating_threshold] = np.inf
+        if motion_gate > 0:
+            cost_matrix[row, np.sqrt(gating_distance) / motion_normalizer > motion_gate] = np.inf # this is euclidean distance
         cost_matrix[row] = lambda_ * cost_matrix[row] + (1 - lambda_) * np.sqrt(gating_distance) / motion_normalizer
     return cost_matrix
+
+def find_min_pairs(cost_matrix, thresh=np.inf):
+    '''For each row, find the column with minimum cost and below thresh'''
+
+    if cost_matrix.shape[0] * cost_matrix.shape[1] == 0:
+        return []
+
+    # First index is all rows
+    idx1 = np.arange(len(cost_matrix))
+    # Second index is minimum values
+    idx2 = np.argmin(cost_matrix, axis=1)
+    # Filter rows where minimum is not below threshold
+    valid = cost_matrix[idx1, idx2] < thresh
+    idx1 = idx1[valid].reshape((1,-1))
+    idx2 = idx2[valid].reshape((1,-1))
+
+    return np.concatenate((idx1, idx2)).T
+
+
+def occlusion_distance(atracks, btracks, history=1, img_dims=[1920,1080]):
+    iou_matrix = iou_distance(atracks, btracks)
+    if (len(atracks)>0 and isinstance(atracks[0], np.ndarray)) or (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
+        atlbrs = np.array(atracks).reshape((-1,4))
+        btlbrs = np.array(btracks).reshape((-1,4))
+    else:
+        atlbrs = np.array([track.history[-min(int(history), len(track.history))] for track in atracks]).reshape((-1,4))
+        btlbrs = np.array([track.history[-min(int(history), len(track.history))] for track in btracks]).reshape((-1,4))
+
+    cost_matrix = cdist(atlbrs, btlbrs, metric=edge_distance) / np.linalg.norm(img_dims)
+
+    return cost_matrix - iou_matrix
+
+def edge_distance(bb1, bb2):
+    dx = max(max(bb2[0] - bb1[2], 0),
+                max(bb1[0] - bb2[2], 0))
+    dy = max(max(bb2[1] - bb1[3], 0),
+                max(bb1[1] - bb2[3], 0))
+    return np.linalg.norm([dx, dy])

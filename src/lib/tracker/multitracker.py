@@ -3,6 +3,7 @@ import os
 import os.path as osp
 import time
 from collections import deque
+import logging
 
 import cv2
 import numpy as np
@@ -42,15 +43,22 @@ class STrack(BaseTrack):
         self.features = deque([], maxlen=buffer_size)
         self.alpha = 0.9
 
+        self.history = deque([], maxlen=buffer_size) # in tlbr format
+        self.history.append(self.tlwh_to_tlbr(self._tlwh))
+
     def update_features(self, feat):
-        feat /= np.linalg.norm(feat)
-        self.curr_feat = feat
-        if self.smooth_feat is None:
-            self.smooth_feat = feat
+        if feat is None:
+            self.curr_feat = feat
+            self.features.append(feat)
         else:
-            self.smooth_feat = self.alpha * self.smooth_feat + (1 - self.alpha) * feat
-        self.features.append(feat)
-        self.smooth_feat /= np.linalg.norm(self.smooth_feat)
+            feat /= np.linalg.norm(feat)
+            self.curr_feat = feat
+            if self.smooth_feat is None:
+                self.smooth_feat = feat
+            else:
+                self.smooth_feat = self.alpha * self.smooth_feat + (1 - self.alpha) * feat
+            self.features.append(feat)
+            self.smooth_feat /= np.linalg.norm(self.smooth_feat)
 
     def predict(self):
         mean_state = self.mean.copy()
@@ -76,7 +84,7 @@ class STrack(BaseTrack):
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
-
+        self.history.append(self.tlwh_to_tlbr(self._tlwh))
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         if frame_id == 1:
@@ -89,7 +97,7 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
-
+        self.history.append(self.tlwh_to_tlbr(new_track.tlwh))
         self.update_features(new_track.curr_feat)
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -97,6 +105,9 @@ class STrack(BaseTrack):
         self.frame_id = frame_id
         if new_id:
             self.track_id = self.next_id()
+
+        self.occluded_by = None
+        new_track.state = TrackState.MatchedDetection
 
     def update(self, new_track, frame_id, update_feature=True):
         """
@@ -110,6 +121,7 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
+        self.history.append(self.tlwh_to_tlbr(new_track.tlwh))
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
         self.state = TrackState.Tracked
@@ -118,6 +130,9 @@ class STrack(BaseTrack):
         self.score = new_track.score
         if update_feature:
             self.update_features(new_track.curr_feat)
+
+        self.occluded_by = None
+        new_track.state = TrackState.MatchedDetection
 
     @property
     def tlwh(self):
@@ -185,16 +200,27 @@ class JDETracker(object):
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
         self.removed_stracks = []  # type: list[STrack]
+        self.frozen_tracks = []
 
         self.frame_id = 0
         self.det_thresh = opt.conf_thres
         self.buffer_size = int(frame_rate / 30.0 * opt.track_buffer)
-        self.max_time_lost = self.buffer_size
+        self.max_frame_lost = self.buffer_size
         self.max_per_image = opt.K
         self.mean = np.array(opt.mean, dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array(opt.std, dtype=np.float32).reshape(1, 1, 3)
 
         self.kalman_filter = KalmanFilter()
+        self.motion_only = False
+        self.byte_track = self.opt.byte_track
+        self.appearance_weight = self.opt.appearance_weight
+        self.handle_occlusion = self.opt.handle_occlusion
+        self.motion_gate = self.opt.motion_gate
+        self.match_thres = self.opt.match_thres
+        self.high_conf_thres = self.opt.high_conf_thres
+        self.conf_thres = self.opt.conf_thres
+
+        self.logger = logging.getLogger('MultiObjectTracker')
 
     def post_process(self, dets, meta):
         dets = dets.detach().cpu().numpy()
@@ -224,13 +250,15 @@ class JDETracker(object):
 
     def update(self, im_blob, img0):
         self.frame_id += 1
-        activated_starcks = []
+        activated_stracks = []
         refind_stracks = []
         lost_stracks = []
         removed_stracks = []
+        frozen_tracks = []
 
         width = img0.shape[1]
         height = img0.shape[0]
+        dims = [height, width]
         inp_height = im_blob.shape[2]
         inp_width = im_blob.shape[3]
         c = np.array([width / 2., height / 2.], dtype=np.float32)
@@ -244,33 +272,33 @@ class JDETracker(object):
             output = self.model(im_blob)[-1]
             hm = output['hm'].sigmoid_()
             wh = output['wh']
-            id_feature = output['id']
-            id_feature = F.normalize(id_feature, dim=1)
+            features = output['id']
+            features = F.normalize(features, dim=1)
 
             reg = output['reg'] if self.opt.reg_offset else None
             dets, inds, cls_inds_masks = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K, num_classes=self.opt.num_classes)
-            id_feature = _tranpose_and_gather_feat(id_feature, inds)
-            id_feature = id_feature.squeeze(0)
-            id_feature = id_feature.cpu().numpy()
+            features = _tranpose_and_gather_feat(features, inds)
+            features = features.squeeze(0)
+            features = features.cpu().numpy()
 
         dets = self.post_process(dets, meta)
-        dets = self.merge_outputs([dets])[1] # only track class #1
-        id_feature = id_feature[cls_inds_masks.cpu().numpy()[1], :]
+        dets = self.merge_outputs([dets])[0] # only track class #1
+        features = features[cls_inds_masks.cpu().numpy()[0], :]
 
         remain_inds = dets[:, 4] > self.opt.conf_thres
         dets = dets[remain_inds]
-        id_feature = id_feature[remain_inds]
-
-        if self.opt.byte_track:
-            remain_inds = dets[:, 4] >= self.opt.high_conf_thres
-            inds_low = dets[:, 4] > self.opt.conf_thres
-            inds_high = dets[:, 4] < self.opt.high_conf_thres
+        features = features[remain_inds]
+        
+        if self.byte_track:
+            remain_inds = dets[:, 4] >= self.high_conf_thres
+            inds_low = dets[:, 4] >= self.conf_thres
+            inds_high = dets[:, 4] < self.high_conf_thres
 
             inds_second = np.logical_and(inds_low, inds_high)
             dets_second = dets[inds_second]
-            id_feature_second = id_feature[inds_second]
+            features_second = features[inds_second]
             
-            id_feature = id_feature[remain_inds]
+            features = features[remain_inds]
             dets = dets[remain_inds]
             
         elif self.opt.nms_thres > 0:
@@ -278,28 +306,16 @@ class JDETracker(object):
             dets = torch.from_numpy(dets).float()
             remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
             dets = dets[remain_inds, :].cpu().detach().numpy()
-            id_feature = id_feature[remain_inds, :]
+            features = features[remain_inds, :]
 
-
-        # vis
-        '''
-        for i in range(0, dets.shape[0]):
-            bbox = dets[i][0:4]
-            cv2.rectangle(img0, (bbox[0], bbox[1]),
-                          (bbox[2], bbox[3]),
-                          (0, 255, 0), 2)
-        cv2.imshow('dets', img0)
-        cv2.waitKey(0)
-        id0 = id0-1
-        '''
-
+        # preprocess detections
         if len(dets) > 0:
             '''Detections'''
             detections = [STrack(STrack.tlbr_to_tlwh(tlbrs[:4]), tlbrs[4], f, 30) for
-                          (tlbrs, f) in zip(dets[:, :5], id_feature)]
+                        (tlbrs, f) in zip(dets[:, :5], features)]
         else:
             detections = []
-
+        
         ''' Add newly detected tracklets to tracked_stracks'''
         unconfirmed = []
         tracked_stracks = []  # type: list[STrack]
@@ -311,55 +327,62 @@ class JDETracker(object):
 
         ''' Step 2: First association, with embedding on high score detection boxes'''
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
+
         # Predict the current location with KF
         #for strack in strack_pool:
             #strack.predict()
         STrack.multi_predict(strack_pool)
-        dists = matching.embedding_distance(strack_pool, detections)
+        if self.motion_only:
+            dists = np.zeros((len(strack_pool), len(detections)), dtype=np.float)
+        else:
+            dists = matching.embedding_distance(strack_pool, detections)
+
+        self.logger.debug("="*20 + f"frame {self.frame_id-1}") # starts with 0
+        self.logger.debug(dists)
         #dists = matching.iou_distance(strack_pool, detections)
         dists = matching.fuse_motion(self.kalman_filter, dists, strack_pool, detections, 
-                                     lambda_=self.opt.appearance_weight, motion_gate=self.opt.motion_gate,
-                                     motion_normalizer=np.linalg.norm([width, height]))
+                                     lambda_=self.appearance_weight, motion_gate=self.motion_gate,
+                                     motion_normalizer=np.linalg.norm(dims))
         
-        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.opt.match_thres)
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thres)
 
-        logger.info("="*20 + f"frame {self.frame_id-1}")
-        logger.info(dists)
+        #self.logger.debug("="*20 + f"frame {self.frame_id-1}") # starts with 0
+        self.logger.debug(dists)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
             det = detections[idet]
             if track.state == TrackState.Tracked:
-                track.update(detections[idet], self.frame_id)
-                activated_starcks.append(track)
+                track.update(detections[idet], self.frame_id, update_feature=not self.motion_only)
+                activated_stracks.append(track)
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
                 refind_stracks.append(track)
 
         ''' Step 3: Second association, with IOU on low score detection boxes'''
-        if self.opt.byte_track:
+        if self.byte_track:
             if len(dets_second) > 0:
                 '''Detections'''
                 detections_second = [STrack(STrack.tlbr_to_tlwh(tlbrs[:4]), tlbrs[4], f, 30) for
-                                    (tlbrs, f) in zip(dets_second[:, :5], id_feature_second)]
+                                    (tlbrs, f) in zip(dets_second[:, :5], features_second)]
             else:
                 detections_second = []
             #detections = [detections[i] for i in u_detection]
             r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
             dists = matching.iou_distance(r_tracked_stracks, detections_second)
-            matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+            matches, u_track_second, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
 
             for itracked, idet in matches:
                 track = r_tracked_stracks[itracked]
                 det = detections_second[idet]
                 if track.state == TrackState.Tracked:
-                    track.update(det, self.frame_id)
-                    activated_starcks.append(track)
+                    track.update(det, self.frame_id, update_feature=not self.motion_only)
+                    activated_stracks.append(track)
                 else:
                     track.re_activate(det, self.frame_id, new_id=False)
                     refind_stracks.append(track)
 
-            for it in u_track:
+            for it in u_track_second:
                 track = r_tracked_stracks[it]
                 if not track.state == TrackState.Lost:
                     track.mark_lost()
@@ -373,52 +396,120 @@ class JDETracker(object):
                     track.mark_lost()
                     lost_stracks.append(track)
 
+
+        ''' Step 4: Handle occlusions'''
+                # philip - occlusion handling
+        if self.handle_occlusion and not self.motion_only:
+
+            ''' Step 4.1 for unmatched tracks, check if it is lost near other tracks'''
+            unfrozen_lost_stracks = [track for track in self.lost_stracks if track.state != TrackState.Frozen and (self.frame_id - track.end_frame == self.max_frame_lost)]
+            dists = matching.occlusion_distance(unfrozen_lost_stracks, activated_stracks, history=max(1, int(self.max_frame_lost/2.)), img_dims=dims)
+            matches = matching.find_min_pairs(dists, thresh=0.1)
+
+            for ioccluded, ioccluding in matches:
+                occluder = activated_stracks[ioccluding]
+                occludee = unfrozen_lost_stracks[ioccluded]
+                if occluder.state == TrackState.Tracked:
+                    # confirmed being occluded
+                    occluder.occluding.update({occludee.track_id: occludee})
+
+                    occludee.state = TrackState.Frozen
+                    occludee.occluded_by = track.track_id
+                    frozen_tracks.append(occludee)
+
+            ''' Step 4.2 for unmatched detections, check the nearby tracks that have occluded others '''
+            unmatched_detections = [detections[i] for i in u_detection] #+ [detections_second[j] for j in u_detection_second]
+            occluding_stracks = [track for track in activated_stracks if len(track.occluding) > 0]
+            dists = matching.occlusion_distance(unmatched_detections, occluding_stracks, img_dims=dims)
+            matches = matching.find_min_pairs(dists, thresh=0.1)
+
+
+            for iudet, ioccluding in matches:
+                occluder = occluding_stracks[ioccluding]
+                udet = unmatched_detections[iudet]
+                frozen_track_candidates = [t for t in self.frozen_tracks if t.track_id in occluder.occluding]
+                dists = matching.embedding_distance([udet], frozen_track_candidates) # 1xn array
+                matches = matching.find_min_pairs(dists, thresh=0.5) # should have no more than 1 element
+
+                for _, ifrozen_track in matches:
+                    # confirmed being recovered from occlusion
+                    frozen_track = frozen_track_candidates[ifrozen_track]
+                    occluder.occluding.pop(frozen_track.track_id)
+                    frozen_track.occluded_by = None
+                    frozen_track.update(udet, self.frame_id, update_feature=not self.motion_only)
+                    activated_stracks.append(frozen_track)
+                    udet.state = TrackState.MatchedDetection
+                    break
+
+            # TODO - id change to some regular tracks for some reason. 4184-46
+
+
+            # what if occluded by background (not detected objects)?
+
         '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
-        detections = [detections[i] for i in u_detection] + [detections_second[j] for j in u_detection_second]
+        detections = [detections[i] for i in u_detection if detections[i].state != TrackState.MatchedDetection]# + [detections_second[j] for j in u_detection_second if detections_second[j].state != TrackState.MatchedDetection]
         dists = matching.iou_distance(unconfirmed, detections)
-        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
+        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=1.0)
         for itracked, idet in matches:
-            unconfirmed[itracked].update(detections[idet], self.frame_id)
-            activated_starcks.append(unconfirmed[itracked])
+            unconfirmed[itracked].update(detections[idet], self.frame_id, update_feature=not self.motion_only)
+            activated_stracks.append(unconfirmed[itracked])
         for it in u_unconfirmed:
             track = unconfirmed[it]
             track.mark_removed()
             removed_stracks.append(track)
+            for occluded_track_id in track.occluding:
+                track.occluding[occluded_track_id].mark_removed()
+                removed_stracks.append(track.occluding[occluded_track_id])
 
-        """ Step 4: Init new stracks"""
+        """ Step 5: Init new stracks"""
         for inew in u_detection:
             track = detections[inew]
-            if track.score < self.det_thresh:
-                continue
+            # do not initialize new tracks in bagging area
+            # the intention here is to filter the noise detected in bagging area
+            #if self.regions.is_bb_in_area(region_coords=self.regions.bagging_area, bb=self.regions.xyxy_to_bb(track.tlbr), min_overlap=0.7):
+            #    continue
+            
             track.activate(self.kalman_filter, self.frame_id)
-            activated_starcks.append(track)
-        """ Step 5: Update state"""
+            activated_stracks.append(track)
+        """ Step 6: Update state"""
         for track in self.lost_stracks:
-            if self.frame_id - track.end_frame > self.max_time_lost:
+            if self.frame_id - track.end_frame > self.max_frame_lost and track.state != TrackState.Frozen:
                 track.mark_removed()
                 removed_stracks.append(track)
+                for occluded_track_id in track.occluding:
+                    track.occluding[occluded_track_id].mark_removed()
+                    removed_stracks.append(track.occluding[occluded_track_id])
 
-        # print('Ramained match {} s'.format(t4-t3))
+            elif self.frame_id - track.end_frame > self.max_frame_lost * 60 and track.state == TrackState.Frozen:
+                track.mark_removed()
+                removed_stracks.append(track)
+                for occluded_track_id in track.occluding:
+                    track.occluding[occluded_track_id].mark_removed()
+                    removed_stracks.append(track.occluding[occluded_track_id])
 
         self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
-        self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
+        self.frozen_tracks = [t for t in self.frozen_tracks if t.state == TrackState.Frozen]
+        self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_stracks)
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
         #self.removed_stracks = sub_stracks(self.removed_stracks, refind_stracks)
-        #self.removed_stracks.extend(removed_stracks)
-        self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
-        self.lost_stracks.extend(lost_stracks)
-        self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
         self.removed_stracks.extend(removed_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, self.tracked_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, frozen_tracks)
+        unfrozen_lost_stracks = sub_stracks(lost_stracks, frozen_tracks)
+        self.frozen_tracks.extend(frozen_tracks)
+        self.lost_stracks.extend(unfrozen_lost_stracks)
+        self.lost_stracks = sub_stracks(self.lost_stracks, self.removed_stracks)
         self.tracked_stracks, self.lost_stracks = remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
         # get scores of lost tracks
         output_stracks = [track for track in self.tracked_stracks if track.is_activated]
 
-        logger.debug('===========Frame {}=========='.format(self.frame_id))
-        logger.debug('Activated: {}'.format([track.track_id for track in activated_starcks]))
-        logger.debug('Refind: {}'.format([track.track_id for track in refind_stracks]))
-        logger.debug('Lost: {}'.format([track.track_id for track in lost_stracks]))
-        logger.debug('Removed: {}'.format([track.track_id for track in removed_stracks]))
-
+        self.logger.debug('===========Frame {}=========='.format(self.frame_id-1))
+        self.logger.debug('Activated: {}'.format([track.track_id for track in activated_stracks]))
+        self.logger.debug('Refind: {}'.format([track.track_id for track in refind_stracks]))
+        self.logger.debug('Occluded: {}'.format([track.track_id for track in frozen_tracks]))
+        self.logger.debug('Lost: {}'.format([track.track_id for track in lost_stracks]))
+        self.logger.debug('Removed: {}'.format([track.track_id for track in removed_stracks]))
+        
         return output_stracks
 
 

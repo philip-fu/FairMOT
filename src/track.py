@@ -245,6 +245,21 @@ if __name__ == '__main__':
         exit(1)
     seqs = [seq.strip() for seq in seqs_str.split()]
 
+    '''
+    import wandb
+    wandb.init(project="ap-tracking-fairmot", entity="philip-fu")
+    wandb.config = {
+        "arch": opt.arch,
+        "model": opt.load_model,
+        "match_thres": opt.match_thres,
+        "appearance_weight": opt.appearance_weight,
+        "conf_thres": opt.conf_thres,
+        "high_conf_thres": opt.high_conf_thres,
+        "byte_track": opt.byte_track,
+        "handle_occlusion": opt.handle_occlusion
+    }
+    '''
+
     main(opt,
          data_root=data_root,
          seqs=seqs,

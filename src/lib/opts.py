@@ -114,10 +114,11 @@ class opts(object):
     self.parser.add_argument('--high_conf_thres', type=float, default=0.6, help='high confidence thresh for BYTETrack')
     self.parser.add_argument('--match_thres', type=float, default=0.4, help='confidence thresh in tracking, reject match if greater than thres.')
     self.parser.add_argument('--appearance_weight', type=float, default=0.4, help='appearance_weight * appearance_dist + (1-appearance_weight) * motion_dist')
-    self.parser.add_argument('--motion_gate', default=False, help='whether to reject faraway match.')
+    self.parser.add_argument('--motion_gate', default=-1, help='whether to reject faraway match.')
     self.parser.add_argument('--det_thres', type=float, default=0.3, help='confidence thresh for detection. New tracks will only be initiated if conf is higher.')
     self.parser.add_argument('--nms_thres', type=float, default=0.5, help='iou thresh for nms')
     self.parser.add_argument('--byte_track', default=False, help='to use BYTETrack')
+    self.parser.add_argument('--handle_occlusion', default=False, help='to use occlusion handling')
     self.parser.add_argument('--track_buffer', type=int, default=30, help='tracking buffer')
     self.parser.add_argument('--min-box-area', type=float, default=100, help='filter out tiny boxes')
     self.parser.add_argument('--input-video', type=str,
@@ -242,7 +243,7 @@ class opts(object):
 
   def init(self, args=''):
     default_dataset_info = {
-      'mot': {'default_resolution': [480, 864], 'num_classes': 2,
+      'mot': {'default_resolution': [480, 864], 'num_classes': 1,
                 'mean': [0.408, 0.447, 0.470], 'std': [0.289, 0.274, 0.278],
                 'dataset': 'jde', 'nID': 14455},
     }

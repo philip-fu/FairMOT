@@ -7,6 +7,8 @@ class TrackState(object):
     Tracked = 1
     Lost = 2
     Removed = 3
+    Frozen = 4
+    MatchedDetection = 5
 
 
 class BaseTrack(object):
@@ -23,6 +25,9 @@ class BaseTrack(object):
     start_frame = 0
     frame_id = 0
     time_since_update = 0
+
+    occluded_by = None
+    occluding = {}
 
     # multi-camera
     location = (np.inf, np.inf)
