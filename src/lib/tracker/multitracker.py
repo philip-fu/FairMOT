@@ -41,10 +41,13 @@ class STrack(BaseTrack):
         self.smooth_feat = None
         self.update_features(temp_feat)
         self.features = deque([], maxlen=buffer_size)
-        self.alpha = 0.9
+        self.alpha = 0.6
 
-        self.history = deque([], maxlen=buffer_size) # in tlbr format
-        self.history.append(self.tlwh_to_tlbr(self._tlwh))
+        self.history = {} # frame_id: tlbr
+        #self.history.append(self.tlwh_to_tlbr(self._tlwh))
+
+        self.occluded_by = None
+        self.occluding = {}
 
     def update_features(self, feat):
         if feat is None:
@@ -84,7 +87,7 @@ class STrack(BaseTrack):
         self.kalman_filter = kalman_filter
         self.track_id = self.next_id()
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
-        self.history.append(self.tlwh_to_tlbr(self._tlwh))
+        self.history.update({frame_id: self.tlwh_to_tlbr(self._tlwh)})
         self.tracklet_len = 0
         self.state = TrackState.Tracked
         if frame_id == 1:
@@ -97,7 +100,7 @@ class STrack(BaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_track.tlwh)
         )
-        self.history.append(self.tlwh_to_tlbr(new_track.tlwh))
+        self.history.update({frame_id: self.tlwh_to_tlbr(new_track.tlwh)})
         self.update_features(new_track.curr_feat)
         self.tracklet_len = 0
         self.state = TrackState.Tracked
@@ -121,7 +124,7 @@ class STrack(BaseTrack):
         self.tracklet_len += 1
 
         new_tlwh = new_track.tlwh
-        self.history.append(self.tlwh_to_tlbr(new_track.tlwh))
+        self.history.update({frame_id: self.tlwh_to_tlbr(new_track.tlwh)})
         self.mean, self.covariance = self.kalman_filter.update(
             self.mean, self.covariance, self.tlwh_to_xyah(new_tlwh))
         self.state = TrackState.Tracked
@@ -255,6 +258,7 @@ class JDETracker(object):
         lost_stracks = []
         removed_stracks = []
         frozen_tracks = []
+        cls_id = 0
 
         width = img0.shape[1]
         height = img0.shape[0]
@@ -276,18 +280,26 @@ class JDETracker(object):
             features = F.normalize(features, dim=1)
 
             reg = output['reg'] if self.opt.reg_offset else None
-            dets, inds, cls_inds_masks = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K, num_classes=self.opt.num_classes)
+            dets, inds = mot_decode(hm, wh, reg=reg, ltrb=self.opt.ltrb, K=self.opt.K)
+            cls_inds_masks = torch.squeeze(dets[:, :, 5] == cls_id)
+            inds = inds[:, cls_inds_masks] # only class #1
             features = _tranpose_and_gather_feat(features, inds)
             features = features.squeeze(0)
             features = features.cpu().numpy()
 
         dets = self.post_process(dets, meta)
-        dets = self.merge_outputs([dets])[0] # only track class #1
-        features = features[cls_inds_masks.cpu().numpy()[0], :]
+        dets = self.merge_outputs([dets])[cls_id] # only track class #1
 
         remain_inds = dets[:, 4] > self.opt.conf_thres
         dets = dets[remain_inds]
         features = features[remain_inds]
+        
+        if self.opt.nms_thres > 0:
+            #nms
+            dets = torch.from_numpy(dets).float()
+            remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
+            dets = dets[remain_inds].cpu().detach().numpy()
+            features = features[remain_inds]
         
         if self.byte_track:
             remain_inds = dets[:, 4] >= self.high_conf_thres
@@ -301,12 +313,6 @@ class JDETracker(object):
             features = features[remain_inds]
             dets = dets[remain_inds]
             
-        elif self.opt.nms_thres > 0:
-            #nms
-            dets = torch.from_numpy(dets).float()
-            remain_inds = ops.nms(dets[:, 0:4], dets[:, 4], iou_threshold=self.opt.nms_thres).cpu().detach().numpy()
-            dets = dets[remain_inds, :].cpu().detach().numpy()
-            features = features[remain_inds, :]
 
         # preprocess detections
         if len(dets) > 0:
@@ -337,8 +343,10 @@ class JDETracker(object):
         else:
             dists = matching.embedding_distance(strack_pool, detections)
 
-        self.logger.debug("="*20 + f"frame {self.frame_id-1}") # starts with 0
-        self.logger.debug(dists)
+        self.logger.info("="*20 + f"frame {self.frame_id-1}") # starts with 0
+        for st in strack_pool:
+            self.logger.info(f"Tracks {st.track_id} is in the candidate pool.")
+        self.logger.info(dists)
         #dists = matching.iou_distance(strack_pool, detections)
         dists = matching.fuse_motion(self.kalman_filter, dists, strack_pool, detections, 
                                      lambda_=self.appearance_weight, motion_gate=self.motion_gate,
@@ -347,7 +355,7 @@ class JDETracker(object):
         matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.match_thres)
 
         #self.logger.debug("="*20 + f"frame {self.frame_id-1}") # starts with 0
-        self.logger.debug(dists)
+        self.logger.info(dists)
 
         for itracked, idet in matches:
             track = strack_pool[itracked]
@@ -402,8 +410,8 @@ class JDETracker(object):
         if self.handle_occlusion and not self.motion_only:
 
             ''' Step 4.1 for unmatched tracks, check if it is lost near other tracks'''
-            unfrozen_lost_stracks = [track for track in self.lost_stracks if track.state != TrackState.Frozen and (self.frame_id - track.end_frame == self.max_frame_lost)]
-            dists = matching.occlusion_distance(unfrozen_lost_stracks, activated_stracks, history=max(1, int(self.max_frame_lost/2.)), img_dims=dims)
+            unfrozen_lost_stracks = [track for track in self.lost_stracks if track.is_activated and track.state != TrackState.Frozen and (self.frame_id - track.end_frame == self.max_frame_lost)]
+            dists = matching.occlusion_distance(unfrozen_lost_stracks, activated_stracks, history_at=int(self.frame_id - self.max_frame_lost), img_dims=dims)
             matches = matching.find_min_pairs(dists, thresh=0.1)
 
             for ioccluded, ioccluding in matches:
@@ -417,11 +425,16 @@ class JDETracker(object):
                     occludee.occluded_by = track.track_id
                     frozen_tracks.append(occludee)
 
+                    self.logger.info(f"Occlusion: {occluder.track_id} over {occludee.track_id} at dist {dists[ioccluded, ioccluding]} away at frame {self.frame_id-self.max_frame_lost}.")
+
             ''' Step 4.2 for unmatched detections, check the nearby tracks that have occluded others '''
-            unmatched_detections = [detections[i] for i in u_detection] #+ [detections_second[j] for j in u_detection_second]
+            unmatched_detections = [detections[i] for i in u_detection] + [detections_second[j] for j in u_detection_second]
             occluding_stracks = [track for track in activated_stracks if len(track.occluding) > 0]
             dists = matching.occlusion_distance(unmatched_detections, occluding_stracks, img_dims=dims)
             matches = matching.find_min_pairs(dists, thresh=0.1)
+
+            for t in occluding_stracks:
+                self.logger.info(f"{t} is occluding {t.occluding}")
 
 
             for iudet, ioccluding in matches:
@@ -431,6 +444,9 @@ class JDETracker(object):
                 dists = matching.embedding_distance([udet], frozen_track_candidates) # 1xn array
                 matches = matching.find_min_pairs(dists, thresh=0.5) # should have no more than 1 element
 
+                
+                self.logger.info(f"Distance for {udet} and {frozen_track_candidates} is {dists}")
+
                 for _, ifrozen_track in matches:
                     # confirmed being recovered from occlusion
                     frozen_track = frozen_track_candidates[ifrozen_track]
@@ -439,6 +455,8 @@ class JDETracker(object):
                     frozen_track.update(udet, self.frame_id, update_feature=not self.motion_only)
                     activated_stracks.append(frozen_track)
                     udet.state = TrackState.MatchedDetection
+
+                    self.logger.info(f"Split: {frozen_track.track_id} escape {occluder.track_id} at dist {dists[:, ifrozen_track]} away.")
                     break
 
             # TODO - id change to some regular tracks for some reason. 4184-46
@@ -504,11 +522,11 @@ class JDETracker(object):
         output_stracks = [track for track in self.tracked_stracks if track.is_activated]
 
         self.logger.debug('===========Frame {}=========='.format(self.frame_id-1))
-        self.logger.debug('Activated: {}'.format([track.track_id for track in activated_stracks]))
-        self.logger.debug('Refind: {}'.format([track.track_id for track in refind_stracks]))
-        self.logger.debug('Occluded: {}'.format([track.track_id for track in frozen_tracks]))
-        self.logger.debug('Lost: {}'.format([track.track_id for track in lost_stracks]))
-        self.logger.debug('Removed: {}'.format([track.track_id for track in removed_stracks]))
+        self.logger.info('Activated: {}'.format([track.track_id for track in activated_stracks]))
+        self.logger.info('Refind: {}'.format([track.track_id for track in refind_stracks]))
+        self.logger.info('Occluded: {}'.format([track.track_id for track in frozen_tracks]))
+        self.logger.info('Lost: {}'.format([track.track_id for track in unfrozen_lost_stracks]))
+        self.logger.info('Removed: {}'.format([track.track_id for track in removed_stracks]))
         
         return output_stracks
 

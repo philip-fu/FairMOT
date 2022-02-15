@@ -11,7 +11,9 @@ def get_logger(name='root'):
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
-    logger.addHandler(handler)
+
+    if not logger.handlers:
+        logger.addHandler(handler)
     return logger
 
 

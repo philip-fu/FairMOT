@@ -26,7 +26,7 @@ def _topk_channel(scores, K=40):
 
       return topk_scores, topk_inds, topk_ys, topk_xs
 
-def _topk(scores, K=40, num_classes=1):
+def _topk(scores, K=40):
     batch, cat, height, width = scores.size()
       
     topk_scores, topk_inds = torch.topk(scores.view(batch, cat, -1), K)
@@ -42,24 +42,26 @@ def _topk(scores, K=40, num_classes=1):
     topk_ys = _gather_feat(topk_ys.view(batch, -1, 1), topk_ind).view(batch, K)
     topk_xs = _gather_feat(topk_xs.view(batch, -1, 1), topk_ind).view(batch, K)
 
+    '''
     # indices for each class
     cls_inds_masks = torch.full((num_classes, K), False, dtype=torch.bool).to(topk_inds.device)
     for cls_id in range(num_classes):
         inds_masks = topk_clses==cls_id
         # cls_topk_inds = topk_inds[inds_masks]
         cls_inds_masks[cls_id] = inds_masks
+    '''
 
-    return topk_score, topk_inds, topk_clses, topk_ys, topk_xs, cls_inds_masks
+    return topk_score, topk_inds, topk_clses, topk_ys, topk_xs#, cls_inds_masks
 
 
-def mot_decode(heat, wh, reg=None, ltrb=False, K=100, num_classes=1):
+def mot_decode(heat, wh, reg=None, ltrb=False, K=100):
     batch, cat, height, width = heat.size()
 
     # heat = torch.sigmoid(heat)
     # perform nms on heatmaps
     heat = _nms(heat)
 
-    scores, inds, clses, ys, xs, cls_inds_masks = _topk(heat, K=K, num_classes=num_classes)
+    scores, inds, clses, ys, xs = _topk(heat, K=K)
     if reg is not None:
         reg = _tranpose_and_gather_feat(reg, inds)
         reg = reg.view(batch, K, 2)
@@ -87,4 +89,4 @@ def mot_decode(heat, wh, reg=None, ltrb=False, K=100, num_classes=1):
                             ys + wh[..., 1:2] / 2], dim=2)
     detections = torch.cat([bboxes, scores, clses], dim=2)
 
-    return detections, inds, cls_inds_masks
+    return detections, inds#, cls_inds_masks

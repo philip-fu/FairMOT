@@ -153,19 +153,22 @@ def find_min_pairs(cost_matrix, thresh=np.inf):
 
     return np.concatenate((idx1, idx2)).T
 
-
-def occlusion_distance(atracks, btracks, history=1, img_dims=[1920,1080]):
-    iou_matrix = iou_distance(atracks, btracks)
+def occlusion_distance(atracks, btracks, history_at=-1, img_dims=[1920,1080]):
     if (len(atracks)>0 and isinstance(atracks[0], np.ndarray)) or (len(btracks) > 0 and isinstance(btracks[0], np.ndarray)):
         atlbrs = np.array(atracks).reshape((-1,4))
         btlbrs = np.array(btracks).reshape((-1,4))
     else:
-        atlbrs = np.array([track.history[-min(int(history), len(track.history))] for track in atracks]).reshape((-1,4))
-        btlbrs = np.array([track.history[-min(int(history), len(track.history))] for track in btracks]).reshape((-1,4))
+        if history_at > 0:
+            atlbrs = np.array([track.history[history_at] if history_at in track.history else [np.inf]*4 for track in atracks]).reshape((-1,4))
+            btlbrs = np.array([track.history[history_at] if history_at in track.history else [np.inf]*4 for track in btracks]).reshape((-1,4))
+        else:
+            atlbrs = np.array([track.tlbr for track in atracks]).reshape((-1,4))
+            btlbrs = np.array([track.tlbr for track in btracks]).reshape((-1,4))
 
     cost_matrix = cdist(atlbrs, btlbrs, metric=edge_distance) / np.linalg.norm(img_dims)
+    _ious = ious(atlbrs, btlbrs)  
 
-    return cost_matrix - iou_matrix
+    return cost_matrix - _ious
 
 def edge_distance(bb1, bb2):
     dx = max(max(bb2[0] - bb1[2], 0),

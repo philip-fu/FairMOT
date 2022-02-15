@@ -96,7 +96,7 @@ def eval_seq(opt, dataloader, data_type, result_filename, save_dir=None, show_im
             tlwh = t.tlwh
             tid = t.track_id
             vertical = tlwh[2] / tlwh[3] > 1.6
-            if tlwh[2] * tlwh[3] > opt.min_box_area and not vertical:
+            if True: #tlwh[2] * tlwh[3] > opt.min_box_area and not vertical:
                 online_tlwhs.append(tlwh)
                 online_ids.append(tid)
                 online_scores.append(t.score)
@@ -212,6 +212,8 @@ if __name__ == '__main__':
                       201907251118_darshan_lane46
                       201907251121_darshan_lane46
                       '''
+
+        #seqs_str = '''201907251018_darshan_lane48'''
         """
         seqs_str = '''fp_20210908_967_27_1631111760000-1631111850000
                       fp_20210908_967_28_1631119740000-1631119760000

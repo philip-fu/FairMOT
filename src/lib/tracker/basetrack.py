@@ -26,9 +26,6 @@ class BaseTrack(object):
     frame_id = 0
     time_since_update = 0
 
-    occluded_by = None
-    occluding = {}
-
     # multi-camera
     location = (np.inf, np.inf)
 
