@@ -9,6 +9,9 @@ from google.cloud import bigquery, storage
 BQ_CLIENT = bigquery.Client() # run `gcloud auth application-default login` to log in at least for the first time
 STORAGE_CLIENT = storage.Client()
 
+
+SKIP_DOWNLOADING = True
+
 def download_images_from_gs(image_prefix, image_extension, image_folder):
     download_command = "gsutil -m -o GSUtil:parallel_process_count=1 -o GSUtil:parallel_thread_count=24 cp {}*{} {}".format(image_prefix, image_extension, image_folder)
     subprocess.run(download_command, shell=True, stderr=subprocess.STDOUT)
@@ -64,7 +67,8 @@ def parse_gt_json(directory_name, output_base_dir='dataset/ap/images/train',
                 continue
             image_uri_dict[bq_row.get('xml_path')] = bq_row.get('image_path')
             for det in bq_row.get('objects'):
-                if det['class'] == 'item':
+                if det['class'] in ['item', 'hand']:
+                    class_id = 0 if det['class'] == 'item' else 1
                     frame_id = pivot # should start with 1
                     tracking_id = det['id']
                     bb_left = det['bndbox']['xmin']
@@ -73,7 +77,8 @@ def parse_gt_json(directory_name, output_base_dir='dataset/ap/images/train',
                     bb_height = det['bndbox']['ymax'] - det['bndbox']['ymin']
                     conf = 1
 
-                    f.write('{},{},{},{},{},{},{},-1,-1,-1\n'.format(
+                    f.write('{},{},{},{},{},{},{},{},-1,-1,-1\n'.format(
+                        class_id,
                         frame_id,
                         tracking_id,
                         bb_left,
@@ -86,10 +91,10 @@ def parse_gt_json(directory_name, output_base_dir='dataset/ap/images/train',
 
         
 
-    if len(image_uri_dict) > 0:
+    if len(image_uri_dict) > 0 and not SKIP_DOWNLOADING:
         print("Downloading images..")
         image_name = image_uri_dict[next(iter(image_uri_dict))]
-        image_prefix = image_name.replace(image_name.split('/')[-1], '')
+        image_prefix = image_name.replace(image_name.split('/')[-1], '')#.replace('/images_png','/images')
         print(image_prefix, image_folder_full)
         download_images_from_gs(image_prefix.replace('/annotations', '/images'), img_extension, image_folder_full)
         
